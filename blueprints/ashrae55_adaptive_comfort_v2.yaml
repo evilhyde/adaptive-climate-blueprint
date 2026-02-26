@@ -74,7 +74,24 @@ blueprint:
       default: true
       selector:
         boolean:
-    
+
+    comfort_zone_hvac_mode:
+      name: HVAC Mode Within Comfort Zone
+      description: >
+        HVAC mode to use when the indoor temperature is already within the comfort zone.
+        Use "heat_cool" if your device supports it (recommended — auto-selects heat/cool).
+        Use "off" to shut off the HVAC completely when already comfortable (most energy efficient).
+      default: "heat_cool"
+      selector:
+        select:
+          options:
+            - label: "Heat/Cool (auto-select, recommended)"
+              value: "heat_cool"
+            - label: "Off (most energy efficient)"
+              value: "off"
+          multiple: false
+          custom_value: false
+
     natural_ventilation_enable:
       name: Natural Ventilation Detection
       description: Automatically turn off HVAC when natural ventilation is sufficient
@@ -233,6 +250,7 @@ variables:
   max_comfort_temp_val: !input max_comfort_temp
   comfort_category_val: !input comfort_category
   energy_save_mode_val: !input energy_save_mode
+  comfort_zone_hvac_mode_val: !input comfort_zone_hvac_mode
   natural_ventilation_enable_val: !input natural_ventilation_enable
   natural_ventilation_threshold_val: !input natural_ventilation_threshold
   setback_temperature_offset_val: !input setback_temperature_offset
@@ -676,14 +694,23 @@ action:
                             data:
                               temperature: "{{ target_temp_display }}"
                       
-                      # Default: within comfort zone, maintain with auto mode (ASHRAE 55 compliant)
+                      # Default: within comfort zone, set HVAC mode based on user preference (ASHRAE 55 compliant)
                       - conditions: []
                         sequence:
-                          - service: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entity
-                            data:
-                              hvac_mode: auto
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ comfort_zone_hvac_mode_val == 'off' }}"
+                                sequence:
+                                  - service: climate.turn_off
+                                    target:
+                                      entity_id: !input climate_entity
+                            default:
+                              - service: climate.set_hvac_mode
+                                target:
+                                  entity_id: !input climate_entity
+                                data:
+                                  hvac_mode: "{{ comfort_zone_hvac_mode_val }}"
                           - condition: template
                             value_template: "{{ temperature_needs_change }}"
                           - service: climate.set_temperature
@@ -709,7 +736,7 @@ action:
                 Target: {{ target_temp_display }}{{ unit_symbol }} (Current: {{ current_temperature }}{{ unit_symbol }}),
                 Indoor: {{ ((indoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else indoor_temp }}{{ unit_symbol }}, Outdoor: {{ ((outdoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else outdoor_temp }}{{ unit_symbol }},
                 Comfort zone: {{ ((comfort_temp_min * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_min }}-{{ ((comfort_temp_max * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_max }}{{ unit_symbol }} (adaptive temp: {{ adaptive_comfort_temp_display }}{{ unit_symbol }}),
-                HVAC Mode: {% if indoor_temp < comfort_temp_min %}HEAT (below comfort zone){% elif indoor_temp > comfort_temp_max %}COOL (above comfort zone){% elif outdoor_temp > comfort_temp_min and comfort_temp_min > indoor_temp %}FAN (natural ventilation opportunity){% elif outdoor_temp < comfort_temp_max and comfort_temp_max < indoor_temp %}FAN (natural ventilation opportunity){% elif (outdoor_temp - indoor_temp) > 3 %}COOL (outdoor >>3{{ unit_symbol }} warmer){% elif (indoor_temp - outdoor_temp) > 3 %}HEAT (outdoor >>3{{ unit_symbol }} cooler){% else %}AUTO (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
+                HVAC Mode: {% if indoor_temp < comfort_temp_min %}HEAT (below comfort zone){% elif indoor_temp > comfort_temp_max %}COOL (above comfort zone){% elif outdoor_temp > comfort_temp_min and comfort_temp_min > indoor_temp %}FAN (natural ventilation opportunity){% elif outdoor_temp < comfort_temp_max and comfort_temp_max < indoor_temp %}FAN (natural ventilation opportunity){% elif (outdoor_temp - indoor_temp) > 3 %}COOL (outdoor >>3{{ unit_symbol }} warmer){% elif (indoor_temp - outdoor_temp) > 3 %}HEAT (outdoor >>3{{ unit_symbol }} cooler){% else %}{{ comfort_zone_hvac_mode_val | upper }} (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
                 Occupancy: {{ 'Occupied' if is_occupied else 'Unoccupied' }},
                 Category: {{ comfort_category_val }} (±{{ comfort_tolerance }}°C),
                 {% if comfort_precision_mode_val %}Air velocity offset: {{ air_velocity_offset }}°C, Humidity offset: {{ humidity_offset }}°C,{% endif %}
