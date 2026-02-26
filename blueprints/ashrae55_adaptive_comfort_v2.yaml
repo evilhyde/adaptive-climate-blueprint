@@ -8,7 +8,7 @@ blueprint:
     
   domain: automation
   author: Marco Sinhoreli
-  source_url: https://github.com/msinhore/adaptive-climate-blueprint
+  source_url: https://github.com/evilhyde/adaptive-climate-blueprint
   
   input:
     climate_entity:
