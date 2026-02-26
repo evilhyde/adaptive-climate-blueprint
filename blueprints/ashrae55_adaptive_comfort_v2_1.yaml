@@ -14,12 +14,11 @@ blueprint:
   input:
     comfort_category:
       name: ASHRAE 55 Comfort Category
-      description: 'Comfort category based on ASHRAE 55 standard: - Category I: ±2°C
-        (90% satisfaction) - Office environments - Category II: ±3°C (80% satisfaction)
-        - Typical residential  - Category III: ±4°C (65% satisfaction) - Maximum energy
-        savings
-
-        '
+      description: >
+        Comfort category based on ASHRAE 55 standard (tolerances in Celsius):
+        - Category I: ±2°C (90% satisfaction) - Office environments
+        - Category II: ±3°C (80% satisfaction) - Typical residential
+        - Category III: ±4°C (65% satisfaction) - Maximum energy savings
       default: II
       selector:
         select:
@@ -192,47 +191,72 @@ blueprint:
         boolean: {}
     natural_ventilation_threshold:
       name: Natural Ventilation Threshold
-      description: Temperature difference threshold for natural ventilation (°C)
+      description: >
+        Temperature difference threshold for natural ventilation in your selected unit.
+        Celsius: 2°C (range 0.5-5°C) | Fahrenheit: 3.5°F (range 1-9°F)
       default: 2.0
       selector:
         number:
           min: 0.5
-          max: 5.0
+          max: 10.0
           step: 0.5
-          unit_of_measurement: °C
+          unit_of_measurement: "°"
           mode: slider
+
+    temperature_unit:
+      name: Temperature Unit
+      description: >
+        Select the unit for all temperature inputs and displayed values.
+        If Fahrenheit is selected, enter all temperature values below in °F.
+      default: "°C"
+      selector:
+        select:
+          options:
+            - label: "Celsius (°C)"
+              value: "°C"
+            - label: "Fahrenheit (°F)"
+              value: "°F"
+          multiple: false
+          custom_value: false
+
     setback_temperature_offset:
       name: Setback Temperature Offset
-      description: Temperature offset when room is unoccupied (°C)
+      description: >
+        Temperature offset when room is unoccupied, in your selected unit.
+        Celsius: 2°C (range 1-5°C) | Fahrenheit: 3.5°F (range 1.8-9°F)
       default: 2.0
       selector:
         number:
           min: 1.0
-          max: 5.0
+          max: 10.0
           step: 0.5
-          unit_of_measurement: °C
+          unit_of_measurement: "°"
           mode: slider
     min_comfort_temp:
       name: Minimum Comfort Temperature
-      description: Absolute minimum comfort temperature (°C)
+      description: >
+        Absolute minimum comfort temperature in your selected unit above.
+        Celsius: 18°C (range 15-22°C) | Fahrenheit: 64°F (range 59-72°F)
       default: 18.0
       selector:
         number:
           min: 15.0
-          max: 22.0
+          max: 75.0
           step: 0.5
-          unit_of_measurement: °C
+          unit_of_measurement: "°"
           mode: slider
     max_comfort_temp:
       name: Maximum Comfort Temperature
-      description: Absolute maximum comfort temperature (°C)
+      description: >
+        Absolute maximum comfort temperature in your selected unit above.
+        Celsius: 28°C (range 25-32°C) | Fahrenheit: 82°F (range 77-90°F)
       default: 28.0
       selector:
         number:
           min: 25.0
-          max: 32.0
+          max: 90.0
           step: 0.5
-          unit_of_measurement: °C
+          unit_of_measurement: "°"
           mode: slider
     temperature_change_threshold:
       name: Temperature Change Threshold
@@ -265,6 +289,9 @@ blueprint:
           mode: slider
 variables:
   temperature_change_threshold_val: !input temperature_change_threshold
+  temperature_unit_val: !input temperature_unit
+  use_fahrenheit: "{{ temperature_unit_val == '°F' }}"
+  unit_symbol: "{{ '°F' if use_fahrenheit else '°C' }}"
   climate_entity_id: !input climate_entity
   indoor_sensor_id: !input indoor_temp_sensor
   outdoor_sensor_id: !input outdoor_temp_sensor
@@ -287,17 +314,19 @@ variables:
   use_occupancy_features_val: !input use_occupancy_features
   auto_shutdown_enable_val: !input auto_shutdown_enable
   auto_shutdown_minutes_val: !input auto_shutdown_minutes
+
+  # Temperature conversions to Celsius
+  min_comfort_temp_c: "{{ ((min_comfort_temp_val - 32) * 5 / 9) | round(2) if use_fahrenheit else min_comfort_temp_val }}"
+  max_comfort_temp_c: "{{ ((max_comfort_temp_val - 32) * 5 / 9) | round(2) if use_fahrenheit else max_comfort_temp_val }}"
+  natural_ventilation_threshold_c: "{{ (natural_ventilation_threshold_val * 5 / 9) | round(2) if use_fahrenheit else natural_ventilation_threshold_val }}"
+  setback_temperature_offset_c: "{{ (setback_temperature_offset_val * 5 / 9) | round(2) if use_fahrenheit else setback_temperature_offset_val }}"
+  temperature_change_threshold_c: "{{ (temperature_change_threshold_val * 5 / 9) | round(2) if use_fahrenheit else temperature_change_threshold_val }}"
+
   comfort_tolerance: "{% if comfort_category_val == \"I\" %}\n  2.0\n{% elif comfort_category_val
     == \"II\" %}\n  3.0\n{% else %}\n  4.0\n{% endif %}\n"
-  outdoor_temp: "{% if outdoor_sensor_id.startswith('weather.') %}\n  {{ state_attr(outdoor_sensor_id,
-    'temperature') | float(20) }}\n{% else %}\n  {{ states(outdoor_sensor_id) | float(20)
-    }}\n{% endif %}\n"
-  indoor_air_temp: "{% if indoor_sensor_id.startswith('weather.') %}\n  {{ state_attr(indoor_sensor_id,
-    'temperature') | float(20) }}\n{% else %}\n  {{ states(indoor_sensor_id) | float(20)
-    }}\n{% endif %}\n"
-  mean_radiant_temp: "{% if mean_radiant_sensor_id and mean_radiant_sensor_id != \"\"
-    %}\n  {{ states(mean_radiant_sensor_id) | float(indoor_air_temp) }}\n{% else %}\n
-    \ {{ indoor_air_temp }}\n{% endif %}\n"
+  outdoor_temp: "{% if outdoor_sensor_id.startswith('weather.') %}\n  {% set raw = state_attr(outdoor_sensor_id, 'temperature') | float(20) %}\n{% else %}\n  {% set raw = states(outdoor_sensor_id) | float(20) %}\n{% endif %}\n{{ ((raw - 32) * 5 / 9) | round(2) if use_fahrenheit else raw }}\n"
+  indoor_air_temp: "{% if indoor_sensor_id.startswith('weather.') %}\n  {% set raw = state_attr(indoor_sensor_id, 'temperature') | float(20) %}\n{% else %}\n  {% set raw = states(indoor_sensor_id) | float(20) %}\n{% endif %}\n{{ ((raw - 32) * 5 / 9) | round(2) if use_fahrenheit else raw }}\n"
+  mean_radiant_temp: "{% if mean_radiant_sensor_id and mean_radiant_sensor_id != \"\" %}\n  {% set raw = states(mean_radiant_sensor_id) | float(indoor_air_temp) %}\n  {{ ((raw - 32) * 5 / 9) | round(2) if use_fahrenheit else raw }}\n{% else %}\n  {{ indoor_air_temp }}\n{% endif %}\n"
   operative_temp: "{% if use_operative_temperature_val and mean_radiant_sensor_id
     and mean_radiant_sensor_id != \"\" %}\n  {{ ((indoor_air_temp + mean_radiant_temp)
     / 2) | round(1) }}\n{% else %}\n  {{ indoor_air_temp }}\n{% endif %}\n"
@@ -332,19 +361,19 @@ variables:
     | int }}\n  {% elif outdoor_temp < indoor_temp %}\n    {{ raw_temp | round(0,
     'ceil') | int }}\n  {% else %}\n    {{ raw_temp | round(0) | int }}\n  {% endif
     %}\n{% else %}\n  22\n{% endif %}\n"
-  comfort_temp_min: '{{ [adaptive_comfort_temp - comfort_tolerance, min_comfort_temp_val]
+  comfort_temp_min: '{{ [adaptive_comfort_temp - comfort_tolerance, min_comfort_temp_c]
     | max | round(1) }}
 
     '
-  comfort_temp_max: '{{ [adaptive_comfort_temp + comfort_tolerance, max_comfort_temp_val]
+  comfort_temp_max: '{{ [adaptive_comfort_temp + comfort_tolerance, max_comfort_temp_c]
     | min | round(1) }}
 
     '
   is_occupied: "{% if occupancy_sensor_id and occupancy_sensor_id != \"\" and use_occupancy_features_val %}\n  {{
     is_state(occupancy_sensor_id, 'on') }}\n{% else %}\n  true\n{% endif %}\n"
   natural_ventilation_available: "{% if natural_ventilation_enable_val %}\n  {% set
-    temp_suitable = (outdoor_temp >= (indoor_temp - natural_ventilation_threshold_val))
-    and \n                         (outdoor_temp <= (indoor_temp + natural_ventilation_threshold_val))
+    temp_suitable = (outdoor_temp >= (indoor_temp - natural_ventilation_threshold_c))
+    and \n                         (outdoor_temp <= (indoor_temp + natural_ventilation_threshold_c))
     and\n                         (outdoor_temp >= comfort_temp_min) and \n                         (outdoor_temp
     <= comfort_temp_max) %}\n  {% set humidity_suitable = true %}\n  {% if outdoor_humidity_sensor_id
     and outdoor_humidity_sensor_id != \"\" %}\n    {% set humidity_suitable = (outdoor_humidity
@@ -357,8 +386,8 @@ variables:
     endif %}\n"
   target_temp: "{% if not is_occupied and energy_save_mode_val %}\n  {% if indoor_temp
     > comfort_temp_max %}\n    {{ comfort_temp_max | round(1) }}\n  {% elif indoor_temp
-    < comfort_temp_min %}\n    {{ max(comfort_temp_min - setback_temperature_offset_val,
-    min_comfort_temp_val) | round(1) }}\n  {% else %}\n    {% set raw_temp = adaptive_comfort_temp
+    < comfort_temp_min %}\n    {{ max(comfort_temp_min - setback_temperature_offset_c,
+    min_comfort_temp_c) | round(1) }}\n  {% else %}\n    {% set raw_temp = adaptive_comfort_temp
     %}\n    {% if outdoor_temp > indoor_temp %}\n      {{ raw_temp | round(0, 'floor')
     | int }}\n    {% elif outdoor_temp < indoor_temp %}\n      {{ raw_temp | round(0,
     'ceil') | int }}\n    {% else %}\n      {{ raw_temp | round(0) | int }}\n    {%
@@ -369,6 +398,8 @@ variables:
     | round(0, 'floor') | int }}\n    {% elif outdoor_temp < indoor_temp %}\n      {{
     raw_temp | round(0, 'ceil') | int }}\n    {% else %}\n      {{ raw_temp | round(0)
     | int }}\n    {% endif %}\n  {% endif %}\n{% endif %}\n"
+  target_temp_display: '{{ (target_temp * 9 / 5 + 32) | round(1) if use_fahrenheit else target_temp | round(1) }}'
+  adaptive_comfort_temp_display: '{{ (adaptive_comfort_temp * 9 / 5 + 32) | round(1) if use_fahrenheit else adaptive_comfort_temp | round(1) }}'
   current_hvac_mode: '{{ state_attr(climate_entity_id, ''hvac_mode'') | string | lower
     }}
 
@@ -384,10 +415,7 @@ variables:
   hvac_mode_needs_change: "{% if indoor_temp < comfort_temp_min %}\n  {{ current_hvac_mode
     != 'heat' }}\n{% elif indoor_temp > comfort_temp_max %}\n  {{ current_hvac_mode
     != 'cool' }}\n{% else %}\n  false\n{% endif %}\n"
-  temperature_needs_change: '{{ (current_temperature - target_temp) | abs >= temperature_change_threshold_val
-    }}
-
-    '
+  temperature_needs_change: '{% set threshold_display = (temperature_change_threshold_val * 9 / 5) if use_fahrenheit else temperature_change_threshold_val %}{{ (current_temperature - target_temp_display) | abs >= threshold_display }}'
   fan_mode_needs_change: "{% if adaptive_air_velocity_val %}\n  {{ current_fan_mode
     != optimal_fan_speed }}\n{% else %}\n  false\n{% endif %}\n"
   prolonged_absence: "{% if occupancy_sensor_id and occupancy_sensor_id != \"\" and use_occupancy_features_val %}\n
@@ -400,14 +428,7 @@ variables:
     \ {% set now = as_timestamp(now()) %}\n  {{ not is_state(occupancy_sensor_id,
     'on') and (now - last_seen) > (auto_shutdown_minutes_val * 60) }}\n{% else %}\n
     \ false\n{% endif %}\n"
-  compliance_notes: "{% set notes = [] %} {% if outdoor_temp < 10 or outdoor_temp
-    > 40 %}\n  {% set notes = notes + [\"Outdoor temp outside valid range (10-40°C):
-    \" + outdoor_temp|string + \"°C\"] %}\n{% elif outdoor_temp > 33.5 %}\n  {% set
-    notes = notes + [\"Outdoor temp above ASHRAE 55 standard range (10-33.5°C): \"
-    + outdoor_temp|string + \"°C - using extrapolation\"] %}\n{% endif %} {% if operative_temp
-    <= 25 and air_velocity_val > 0.3 %}\n  {% set notes = notes + [\"Air velocity
-    cooling only applies above 25°C operative temp\"] %}\n{% endif %} {% if notes|length
-    > 0 %}\n  {{ notes | join(\"; \") }}\n{% else %}\n  \"Compliant\"\n{% endif %}\n"
+  compliance_notes: "{% set notes = [] %} {% if outdoor_temp < 10 or outdoor_temp > 40 %}\n  {% set display_ot = (outdoor_temp * 9/5 + 32) | round(1) if use_fahrenheit else outdoor_temp %}\n  {% set notes = notes + [\"Outdoor temp outside valid ASHRAE 55 range (10-40°C / 50-104°F): \" + display_ot|string + unit_symbol] %}\n{% elif outdoor_temp > 33.5 %}\n  {% set display_ot = (outdoor_temp * 9/5 + 32) | round(1) if use_fahrenheit else outdoor_temp %}\n  {% set notes = notes + [\"Outdoor temp above standard range (10-33.5°C / 50-92.3°F): \" + display_ot|string + unit_symbol + \" - using extrapolation\"] %}\n{% endif %} {% if operative_temp <= 25 and air_velocity_val > 0.3 %}\n  {% set notes = notes + [\"Air velocity cooling only applies above 25°C (77°F) operative temp\"] %}\n{% endif %} {% if notes|length > 0 %}\n  {{ notes | join(\"; \") }}\n{% else %}\n  \"Compliant\"\n{% endif %}\n"
 trigger:
 - platform: time_pattern
   minutes: 0
@@ -462,11 +483,7 @@ action:
     - service: logbook.log
       data:
         name: ASHRAE 55 Adaptive Climate {{ this.name}}
-        message: 'Natural ventilation active. HVAC turned off. Outdoor: {{ outdoor_temp
-          }}°C, Indoor: {{ indoor_temp }}°C, Comfort zone: {{ comfort_temp_min }}-{{
-          comfort_temp_max }}°C
-
-          '
+        message: 'Natural ventilation active. HVAC turned off. Outdoor: {{ ((outdoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else outdoor_temp }}{{ unit_symbol }}, Indoor: {{ ((indoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else indoor_temp }}{{ unit_symbol }}, Comfort zone: {{ ((comfort_temp_min * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_min }}-{{ ((comfort_temp_max * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_max }}{{ unit_symbol }}'
   - conditions:
     - condition: template
       value_template: '{{ not natural_ventilation_available and not auto_shutdown_absence }}'
@@ -487,7 +504,7 @@ action:
           target:
             entity_id: !input climate_entity
           data:
-            temperature: '{{ target_temp }}'
+            temperature: '{{ target_temp_display }}'
         - condition: template
           value_template: '{{ adaptive_air_velocity_val and fan_mode_needs_change
             }}'
@@ -511,7 +528,7 @@ action:
           target:
             entity_id: !input climate_entity
           data:
-            temperature: '{{ target_temp }}'
+            temperature: '{{ target_temp_display }}'
         - condition: template
           value_template: '{{ adaptive_air_velocity_val and fan_mode_needs_change
             }}'
@@ -589,7 +606,7 @@ action:
               target:
                 entity_id: !input climate_entity
               data:
-                temperature: '{{ target_temp }}'
+                temperature: '{{ target_temp_display }}'
           - conditions:
             - condition: template
               value_template: '{{ (indoor_temp - outdoor_temp) > 3 }}'
@@ -609,7 +626,7 @@ action:
               target:
                 entity_id: !input climate_entity
               data:
-                temperature: '{{ target_temp }}'
+                temperature: '{{ target_temp_display }}'
           - conditions: []
             sequence:
             - choose:
@@ -630,7 +647,7 @@ action:
                   target:
                     entity_id: !input climate_entity
                   data:
-                    temperature: '{{ adaptive_comfort_temp }}'
+                    temperature: '{{ adaptive_comfort_temp_display }}'
               - conditions:
                 - condition: template
                   value_template: '{{ outdoor_temp < indoor_temp }}'
@@ -648,7 +665,7 @@ action:
                   target:
                     entity_id: !input climate_entity
                   data:
-                    temperature: '{{ adaptive_comfort_temp }}'
+                    temperature: '{{ adaptive_comfort_temp_display }}'
               - conditions:
                 - condition: template
                   value_template: '{{ outdoor_temp == indoor_temp }}'
@@ -664,16 +681,16 @@ action:
     - service: logbook.log
       data:
         name: ASHRAE 55 Adaptive Climate {{ this.name }}
-        message: 'ASHRAE 55 compliant climate control applied.  Target: {{ target_temp
-          }}°C (Current: {{ current_temperature }}°C), Indoor: {{ indoor_temp }}°C,
-          Outdoor: {{ outdoor_temp }}°C, Comfort zone: {{ comfort_temp_min }}-{{ comfort_temp_max
-          }}°C (adaptive temp: {{ adaptive_comfort_temp }}°C), HVAC Mode: {% if indoor_temp
+        message: 'ASHRAE 55 compliant climate control applied.  Target: {{ target_temp_display
+          }}{{ unit_symbol }} (Current: {{ current_temperature }}{{ unit_symbol }}), Indoor: {{ ((indoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else indoor_temp }}{{ unit_symbol }},
+          Outdoor: {{ ((outdoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else outdoor_temp }}{{ unit_symbol }}, Comfort zone: {{ ((comfort_temp_min * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_min }}-{{ ((comfort_temp_max * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_max
+          }}{{ unit_symbol }} (adaptive temp: {{ adaptive_comfort_temp_display }}{{ unit_symbol }}), HVAC Mode: {% if indoor_temp
           < comfort_temp_min %}HEAT (below comfort zone){% elif indoor_temp > comfort_temp_max
           %}COOL (above comfort zone){% elif outdoor_temp > comfort_temp_min and comfort_temp_min
           > indoor_temp %}FAN (natural ventilation opportunity){% elif outdoor_temp
           < comfort_temp_max and comfort_temp_max < indoor_temp %}FAN (natural ventilation
-          opportunity){% elif (outdoor_temp - indoor_temp) > 3 %}COOL (outdoor >>3°C
-          warmer){% elif (indoor_temp - outdoor_temp) > 3 %}HEAT (outdoor >>3°C cooler){%
+          opportunity){% elif (outdoor_temp - indoor_temp) > 3 %}COOL (outdoor >>3{{ unit_symbol }}
+          warmer){% elif (indoor_temp - outdoor_temp) > 3 %}HEAT (outdoor >>3{{ unit_symbol }} cooler){%
           else %}AUTO (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
           Occupancy: {{ ''Occupied'' if is_occupied else ''Unoccupied'' }}, Category:
           {{ comfort_category_val }} (±{{ comfort_tolerance }}°C), {% if comfort_precision_mode_val
