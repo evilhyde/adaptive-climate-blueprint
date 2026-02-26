@@ -39,17 +39,39 @@ blueprint:
             - weather
     
     occupancy_sensor:
-      name: Occupancy Sensor (Optional)
-      description: Motion or presence sensor for occupancy-aware control
-      default: 
+      name: Occupancy Sensors (Optional)
+      description: >
+        One or more motion or presence sensors for occupancy-aware control.
+        Occupied = any sensor is 'on'. Leave empty to treat space as always occupied.
+      default: []
       selector:
         entity:
           domain: binary_sensor
-          device_class: 
+          device_class:
             - motion
             - occupancy
             - presence
-    
+          multiple: true
+
+    night_mode_start:
+      name: Night Window Start (Optional)
+      description: >
+        Start time of the night/sleep window. During this window the home is
+        treated as occupied regardless of sensor state, solving the
+        sleeping-occupant problem. Leave at 00:00:00 to disable.
+      default: "00:00:00"
+      selector:
+        time: {}
+
+    night_mode_end:
+      name: Night Window End (Optional)
+      description: >
+        End time of the night/sleep window. Supports cross-midnight ranges
+        (e.g. start 23:00:00, end 07:00:00). Leave at 00:00:00 to disable.
+      default: "00:00:00"
+      selector:
+        time: {}
+
     comfort_category:
       name: ASHRAE 55 Comfort Category
       description: >
@@ -243,6 +265,8 @@ variables:
   indoor_sensor_id: !input indoor_temp_sensor
   outdoor_sensor_id: !input outdoor_temp_sensor
   occupancy_sensor_id: !input occupancy_sensor
+  night_mode_start_val: !input night_mode_start
+  night_mode_end_val: !input night_mode_end
   mean_radiant_sensor_id: !input mean_radiant_temp_sensor
   indoor_humidity_sensor_id: !input indoor_humidity_sensor
   outdoor_humidity_sensor_id: !input outdoor_humidity_sensor
@@ -396,10 +420,31 @@ variables:
     {{ [adaptive_comfort_temp + comfort_tolerance, max_comfort_temp_c] | min | round(1) }}
   
   is_occupied: >
-    {% if occupancy_sensor_id and occupancy_sensor_id != "" %}
-      {{ is_state(occupancy_sensor_id, 'on') }}
+    {% set t_now = now().strftime('%H:%M:%S') %}
+    {% set t_start = night_mode_start_val %}
+    {% set t_end = night_mode_end_val %}
+    {% set night_configured = t_start != '00:00:00' or t_end != '00:00:00' %}
+    {% if night_configured %}
+      {% if t_start <= t_end %}
+        {% set in_night_window = t_now >= t_start and t_now < t_end %}
+      {% else %}
+        {% set in_night_window = t_now >= t_start or t_now < t_end %}
+      {% endif %}
     {% else %}
+      {% set in_night_window = false %}
+    {% endif %}
+    {% if in_night_window %}
       true
+    {% elif occupancy_sensor_id | length == 0 %}
+      true
+    {% else %}
+      {% set ns = namespace(any_on=false) %}
+      {% for sensor in occupancy_sensor_id %}
+        {% if is_state(sensor, 'on') %}
+          {% set ns.any_on = true %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.any_on }}
     {% endif %}
   
   # Enhanced natural ventilation with humidity consideration

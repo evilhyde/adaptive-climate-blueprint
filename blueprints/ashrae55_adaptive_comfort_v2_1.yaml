@@ -110,20 +110,41 @@ blueprint:
           - weather
           multiple: false
     occupancy_sensor:
-      name: Occupancy Sensor (Optional)
-      description: Motion or presence sensor for occupancy-aware control
-      default:
+      name: Occupancy Sensors (Optional)
+      description: >
+        One or more motion or presence sensors for occupancy-aware control.
+        Occupied = any sensor is 'on'. Sensors from any area can be selected.
+        Leave empty to treat space as always occupied.
+      default: []
       selector:
         entity:
-          filter:
-            - area: !input area
           domain:
           - binary_sensor
           device_class:
           - motion
           - occupancy
           - presence
-          multiple: false
+          multiple: true
+
+    night_mode_start:
+      name: Night Window Start (Optional)
+      description: >
+        Start time of the night/sleep window. During this window the home is
+        treated as occupied regardless of sensor state, solving the
+        sleeping-occupant problem. Leave at 00:00:00 to disable.
+      default: "00:00:00"
+      selector:
+        time: {}
+
+    night_mode_end:
+      name: Night Window End (Optional)
+      description: >
+        End time of the night/sleep window. Supports cross-midnight ranges
+        (e.g. start 23:00:00, end 07:00:00). Leave at 00:00:00 to disable.
+      default: "00:00:00"
+      selector:
+        time: {}
+
     use_occupancy_features:
       name: Use Occupancy Features
       description: Enable occupancy-based features (requires occupancy sensor)
@@ -314,6 +335,8 @@ variables:
   indoor_sensor_id: !input indoor_temp_sensor
   outdoor_sensor_id: !input outdoor_temp_sensor
   occupancy_sensor_id: !input occupancy_sensor
+  night_mode_start_val: !input night_mode_start
+  night_mode_end_val: !input night_mode_end
   mean_radiant_sensor_id: !input mean_radiant_temp_sensor
   indoor_humidity_sensor_id: !input indoor_humidity_sensor
   outdoor_humidity_sensor_id: !input outdoor_humidity_sensor
@@ -388,8 +411,37 @@ variables:
     | min | round(1) }}
 
     '
-  is_occupied: "{% if occupancy_sensor_id and occupancy_sensor_id != \"\" and use_occupancy_features_val %}\n  {{
-    is_state(occupancy_sensor_id, 'on') }}\n{% else %}\n  true\n{% endif %}\n"
+  is_occupied: >
+    {% if not use_occupancy_features_val %}
+      true
+    {% else %}
+      {% set t_now = now().strftime('%H:%M:%S') %}
+      {% set t_start = night_mode_start_val %}
+      {% set t_end = night_mode_end_val %}
+      {% set night_configured = t_start != '00:00:00' or t_end != '00:00:00' %}
+      {% if night_configured %}
+        {% if t_start <= t_end %}
+          {% set in_night_window = t_now >= t_start and t_now < t_end %}
+        {% else %}
+          {% set in_night_window = t_now >= t_start or t_now < t_end %}
+        {% endif %}
+      {% else %}
+        {% set in_night_window = false %}
+      {% endif %}
+      {% if in_night_window %}
+        true
+      {% elif occupancy_sensor_id | length == 0 %}
+        true
+      {% else %}
+        {% set ns = namespace(any_on=false) %}
+        {% for sensor in occupancy_sensor_id %}
+          {% if is_state(sensor, 'on') %}
+            {% set ns.any_on = true %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.any_on }}
+      {% endif %}
+    {% endif %}
   natural_ventilation_available: "{% if natural_ventilation_enable_val %}\n  {% set
     temp_suitable = (outdoor_temp >= (indoor_temp - natural_ventilation_threshold_c))
     and \n                         (outdoor_temp <= (indoor_temp + natural_ventilation_threshold_c))
@@ -437,16 +489,40 @@ variables:
   temperature_needs_change: '{% set threshold_display = (temperature_change_threshold_val * 9 / 5) if use_fahrenheit else temperature_change_threshold_val %}{{ (current_temperature - target_temp_display) | abs >= threshold_display }}'
   fan_mode_needs_change: "{% if adaptive_air_velocity_val %}\n  {{ current_fan_mode
     != optimal_fan_speed }}\n{% else %}\n  false\n{% endif %}\n"
-  prolonged_absence: "{% if occupancy_sensor_id and occupancy_sensor_id != \"\" and use_occupancy_features_val %}\n
-    \ {% set last_seen = as_timestamp(states[occupancy_sensor_id].last_changed) %}\n
-    \ {% set now = as_timestamp(now()) %}\n  {{ not is_state(occupancy_sensor_id,
-    'on') and (now - last_seen) > ((prolonged_absence_minutes_val | default(60)) *
-    60) }}\n{% else %}\n  false\n{% endif %}\n"
-  auto_shutdown_absence: "{% if occupancy_sensor_id and occupancy_sensor_id != \"\" and use_occupancy_features_val and auto_shutdown_enable_val %}\n
-    \ {% set last_seen = as_timestamp(states[occupancy_sensor_id].last_changed) %}\n
-    \ {% set now = as_timestamp(now()) %}\n  {{ not is_state(occupancy_sensor_id,
-    'on') and (now - last_seen) > (auto_shutdown_minutes_val * 60) }}\n{% else %}\n
-    \ false\n{% endif %}\n"
+  prolonged_absence: >
+    {% if occupancy_sensor_id | length == 0 or not use_occupancy_features_val %}
+      false
+    {% else %}
+      {% set ns = namespace(any_on=false, latest_changed=0) %}
+      {% for sensor in occupancy_sensor_id %}
+        {% if is_state(sensor, 'on') %}
+          {% set ns.any_on = true %}
+        {% endif %}
+        {% set t = as_timestamp(states[sensor].last_changed) %}
+        {% if t > ns.latest_changed %}
+          {% set ns.latest_changed = t %}
+        {% endif %}
+      {% endfor %}
+      {% set elapsed_minutes = (as_timestamp(now()) - ns.latest_changed) / 60 %}
+      {{ not ns.any_on and elapsed_minutes > (prolonged_absence_minutes_val | default(60)) }}
+    {% endif %}
+  auto_shutdown_absence: >
+    {% if occupancy_sensor_id | length == 0 or not use_occupancy_features_val or not auto_shutdown_enable_val %}
+      false
+    {% else %}
+      {% set ns = namespace(any_on=false, latest_changed=0) %}
+      {% for sensor in occupancy_sensor_id %}
+        {% if is_state(sensor, 'on') %}
+          {% set ns.any_on = true %}
+        {% endif %}
+        {% set t = as_timestamp(states[sensor].last_changed) %}
+        {% if t > ns.latest_changed %}
+          {% set ns.latest_changed = t %}
+        {% endif %}
+      {% endfor %}
+      {% set elapsed_minutes = (as_timestamp(now()) - ns.latest_changed) / 60 %}
+      {{ not ns.any_on and elapsed_minutes > auto_shutdown_minutes_val }}
+    {% endif %}
   compliance_notes: "{% set notes = [] %} {% if outdoor_temp < 10 or outdoor_temp > 40 %}\n  {% set display_ot = (outdoor_temp * 9/5 + 32) | round(1) if use_fahrenheit else outdoor_temp %}\n  {% set notes = notes + [\"Outdoor temp outside valid ASHRAE 55 range (10-40°C / 50-104°F): \" + display_ot|string + unit_symbol] %}\n{% elif outdoor_temp > 33.5 %}\n  {% set display_ot = (outdoor_temp * 9/5 + 32) | round(1) if use_fahrenheit else outdoor_temp %}\n  {% set notes = notes + [\"Outdoor temp above standard range (10-33.5°C / 50-92.3°F): \" + display_ot|string + unit_symbol + \" - using extrapolation\"] %}\n{% endif %} {% if operative_temp <= 25 and air_velocity_val > 0.3 %}\n  {% set notes = notes + [\"Air velocity cooling only applies above 25°C (77°F) operative temp\"] %}\n{% endif %} {% if notes|length > 0 %}\n  {{ notes | join(\"; \") }}\n{% else %}\n  \"Compliant\"\n{% endif %}\n"
 trigger:
 - platform: time_pattern
@@ -491,7 +567,7 @@ action:
         name: ASHRAE 55 Adaptive Climate {{ this.name}}
         message: 'Auto shutdown activated due to prolonged absence ({{ auto_shutdown_minutes_val }} min).
           HVAC turned off for energy saving.
-          Last presence: {{ states[occupancy_sensor_id].last_changed | as_timestamp | timestamp_custom(''%H:%M:%S'') }}'
+          Last presence: {% set ns = namespace(latest=0) %}{% for s in occupancy_sensor_id %}{% set t = as_timestamp(states[s].last_changed) %}{% if t > ns.latest %}{% set ns.latest = t %}{% endif %}{% endfor %}{{ ns.latest | timestamp_custom(''%H:%M:%S'') }}'
   - conditions:
     - condition: template
       value_template: '{{ natural_ventilation_available and is_occupied }}'
