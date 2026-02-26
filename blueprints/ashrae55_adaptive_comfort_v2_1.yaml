@@ -10,7 +10,7 @@ blueprint:
     '
   domain: automation
   author: Marco Sinhoreli
-  source_url: https://github.com/evilhyde/adaptive-climate-blueprint/blob/main/blueprints/ashrae55_adaptive_comfort_v2_1.yaml
+  source_url: https://raw.githubusercontent.com/evilhyde/adaptive-climate-blueprint/main/blueprints/ashrae55_adaptive_comfort_v2_1.yaml
   input:
     comfort_category:
       name: ASHRAE 55 Comfort Category
