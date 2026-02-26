@@ -133,7 +133,24 @@ blueprint:
           max: 10.0
           step: 0.5
           unit_of_measurement: "°"
-    
+
+    preemptive_hvac_threshold:
+      name: Preemptive HVAC Threshold (Optional)
+      description: >
+        Temperature difference (in your selected unit) between outdoor and indoor
+        that triggers preemptive heating or cooling even when already within the
+        comfort zone. For example, if set to 5°F (or 5°C), HEAT activates when
+        outdoor is 5°F cooler than indoor to anticipate heat loss.
+        Set to 0 to disable preemptive mode entirely.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 15
+          step: 0.5
+          unit_of_measurement: "°"
+          mode: slider
+
     setback_temperature_offset:
       name: Setback Temperature Offset
       description: >
@@ -283,6 +300,7 @@ variables:
   adaptive_air_velocity_val: !input adaptive_air_velocity
   humidity_comfort_enable_val: !input humidity_comfort_enable
   comfort_precision_mode_val: !input comfort_precision_mode
+  preemptive_hvac_threshold_val: !input preemptive_hvac_threshold
 
   # --- Unit support (Fahrenheit/Celsius) ---------------------------------
   temperature_unit_val: !input temperature_unit
@@ -303,6 +321,9 @@ variables:
 
   setback_temperature_offset_c: >
     {{ (setback_temperature_offset_val * 5 / 9) | round(2) if use_fahrenheit else setback_temperature_offset_val }}
+
+  preemptive_threshold_c: >
+    {{ (preemptive_hvac_threshold_val * 5 / 9) | round(2) if use_fahrenheit else preemptive_hvac_threshold_val }}
 
   comfort_tolerance: >
     {% if comfort_category_val == "I" %}
@@ -669,44 +690,10 @@ action:
                       {{ indoor_temp >= comfort_temp_min and indoor_temp <= comfort_temp_max }}
                 sequence:
                   - choose:
-                      # ASHRAE 55 natural ventilation opportunity: outdoor > comfort_min > indoor
-                      - conditions:
-                          - condition: template
-                            value_template: >
-                              {{ outdoor_temp > comfort_temp_min and comfort_temp_min > indoor_temp }}
-                        sequence:
-                          - service: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entity
-                            data:
-                              hvac_mode: fan_only
-                          - service: climate.set_fan_mode
-                            target:
-                              entity_id: !input climate_entity
-                            data:
-                              fan_mode: "medium"
-                      
-                      # ASHRAE 55 natural ventilation opportunity: outdoor < comfort_max < indoor
-                      - conditions:
-                          - condition: template
-                            value_template: >
-                              {{ outdoor_temp < comfort_temp_max and comfort_temp_max < indoor_temp }}
-                        sequence:
-                          - service: climate.set_hvac_mode
-                            target:
-                              entity_id: !input climate_entity
-                            data:
-                              hvac_mode: fan_only
-                          - service: climate.set_fan_mode
-                            target:
-                              entity_id: !input climate_entity
-                            data:
-                              fan_mode: "low"
-                      
                       # Within comfort zone but outdoor significantly warmer - minimal cooling
                       - conditions:
                           - condition: template
-                            value_template: "{{ (outdoor_temp - indoor_temp) > 3 }}"
+                            value_template: "{{ preemptive_threshold_c > 0 and (outdoor_temp - indoor_temp) > preemptive_threshold_c }}"
                         sequence:
                           - service: climate.set_hvac_mode
                             target:
@@ -724,7 +711,7 @@ action:
                       # Within comfort zone but outdoor significantly cooler - minimal heating
                       - conditions:
                           - condition: template
-                            value_template: "{{ (indoor_temp - outdoor_temp) > 3 }}"
+                            value_template: "{{ preemptive_threshold_c > 0 and (indoor_temp - outdoor_temp) > preemptive_threshold_c }}"
                         sequence:
                           - service: climate.set_hvac_mode
                             target:
@@ -781,7 +768,7 @@ action:
                 Target: {{ target_temp_display }}{{ unit_symbol }} (Current: {{ current_temperature }}{{ unit_symbol }}),
                 Indoor: {{ ((indoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else indoor_temp }}{{ unit_symbol }}, Outdoor: {{ ((outdoor_temp * 9/5 + 32) | round(1)) if use_fahrenheit else outdoor_temp }}{{ unit_symbol }},
                 Comfort zone: {{ ((comfort_temp_min * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_min }}-{{ ((comfort_temp_max * 9/5 + 32) | round(1)) if use_fahrenheit else comfort_temp_max }}{{ unit_symbol }} (adaptive temp: {{ adaptive_comfort_temp_display }}{{ unit_symbol }}),
-                HVAC Mode: {% if indoor_temp < comfort_temp_min %}HEAT (below comfort zone){% elif indoor_temp > comfort_temp_max %}COOL (above comfort zone){% elif outdoor_temp > comfort_temp_min and comfort_temp_min > indoor_temp %}FAN (natural ventilation opportunity){% elif outdoor_temp < comfort_temp_max and comfort_temp_max < indoor_temp %}FAN (natural ventilation opportunity){% elif (outdoor_temp - indoor_temp) > 3 %}COOL (outdoor >>3{{ unit_symbol }} warmer){% elif (indoor_temp - outdoor_temp) > 3 %}HEAT (outdoor >>3{{ unit_symbol }} cooler){% else %}{{ comfort_zone_hvac_mode_val | upper }} (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
+                HVAC Mode: {% if indoor_temp < comfort_temp_min %}HEAT (below comfort zone){% elif indoor_temp > comfort_temp_max %}COOL (above comfort zone){% elif preemptive_threshold_c > 0 and (outdoor_temp - indoor_temp) > preemptive_threshold_c %}COOL (outdoor >{{ preemptive_hvac_threshold_val }}{{ unit_symbol }} warmer){% elif preemptive_threshold_c > 0 and (indoor_temp - outdoor_temp) > preemptive_threshold_c %}HEAT (outdoor >{{ preemptive_hvac_threshold_val }}{{ unit_symbol }} cooler){% else %}{{ comfort_zone_hvac_mode_val | upper }} (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
                 Occupancy: {{ 'Occupied' if is_occupied else 'Unoccupied' }},
                 Category: {{ comfort_category_val }} (±{{ comfort_tolerance }}°C),
                 {% if comfort_precision_mode_val %}Air velocity offset: {{ air_velocity_offset }}°C, Humidity offset: {{ humidity_offset }}°C,{% endif %}
