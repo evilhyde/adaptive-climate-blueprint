@@ -69,6 +69,16 @@ blueprint:
           multiple: false
           custom_value: false
 
+    use_ecobee_preset_modes:
+      name: Use Ecobee Preset Modes (Optional)
+      description: >
+        If enabled, the automation will call set_preset_mode (home/sleep/away) on the
+        climate entity before setting the temperature. Use only with Ecobee thermostats.
+        Keeps the Ecobee's fan/humidity profile in sync with occupancy state.
+      default: false
+      selector:
+        boolean: {}
+
     comfort_precision_mode:
       name: Precision Comfort Mode
       description: Use high-precision calculations matching CBE tool accuracy
@@ -354,6 +364,7 @@ variables:
   comfort_category_val: !input comfort_category
   energy_save_mode_val: !input energy_save_mode
   comfort_zone_hvac_mode_val: !input comfort_zone_hvac_mode
+  use_ecobee_preset_modes_val: !input use_ecobee_preset_modes
   natural_ventilation_enable_val: !input natural_ventilation_enable
   natural_ventilation_threshold_val: !input natural_ventilation_threshold
   setback_temperature_offset_val: !input setback_temperature_offset
@@ -482,6 +493,27 @@ variables:
     | int }}\n    {% endif %}\n  {% endif %}\n{% endif %}\n"
   target_temp_display: '{{ (target_temp * 9 / 5 + 32) | round(1) if use_fahrenheit else target_temp | round(1) }}'
   adaptive_comfort_temp_display: '{{ (adaptive_comfort_temp * 9 / 5 + 32) | round(1) if use_fahrenheit else adaptive_comfort_temp | round(1) }}'
+  ecobee_preset: >
+    {% set t_now = now().strftime('%H:%M:%S') %}
+    {% set t_start = night_mode_start_val %}
+    {% set t_end = night_mode_end_val %}
+    {% set night_configured = t_start != '00:00:00' or t_end != '00:00:00' %}
+    {% if night_configured %}
+      {% if t_start <= t_end %}
+        {% set in_night_window = t_now >= t_start and t_now < t_end %}
+      {% else %}
+        {% set in_night_window = t_now >= t_start or t_now < t_end %}
+      {% endif %}
+    {% else %}
+      {% set in_night_window = false %}
+    {% endif %}
+    {% if in_night_window %}
+      sleep
+    {% elif not is_occupied or prolonged_absence %}
+      away
+    {% else %}
+      home
+    {% endif %}
   current_hvac_mode: '{{ state_attr(climate_entity_id, ''hvac_mode'') | string | lower
     }}
 
@@ -594,6 +626,15 @@ action:
     - condition: template
       value_template: '{{ not natural_ventilation_available and not auto_shutdown_absence }}'
     sequence:
+    - if:
+        - condition: template
+          value_template: '{{ use_ecobee_preset_modes_val }}'
+      then:
+        - service: climate.set_preset_mode
+          target:
+            entity_id: !input climate_entity
+          data:
+            preset_mode: '{{ ecobee_preset }}'
     - choose:
       - conditions:
         - condition: template
@@ -809,7 +850,7 @@ action:
           %}COOL (above comfort zone){% elif preemptive_threshold_c > 0 and (outdoor_temp - indoor_temp) > preemptive_threshold_c %}COOL (outdoor >{{ preemptive_hvac_threshold_val }}{{ unit_symbol }}
           warmer){% elif preemptive_threshold_c > 0 and (indoor_temp - outdoor_temp) > preemptive_threshold_c %}HEAT (outdoor >{{ preemptive_hvac_threshold_val }}{{ unit_symbol }} cooler){%
           else %}{{ comfort_zone_hvac_mode_val | upper }} (within comfort zone){% endif %} (was {{ current_hvac_mode }}),
-          Occupancy: {{ ''Occupied'' if is_occupied else ''Unoccupied'' }}, Category:
+          Occupancy: {{ ''Occupied'' if is_occupied else ''Unoccupied'' }}, Preset: {{ ecobee_preset if use_ecobee_preset_modes_val else ''N/A'' }}, Category:
           {{ comfort_category_val }} (±{{ comfort_tolerance }}°C), {% if comfort_precision_mode_val
           %}Air velocity offset: {{ air_velocity_offset }}°C, Humidity offset: {{
           humidity_offset }}°C,{% endif %} {% if adaptive_air_velocity_val %}Fan:
